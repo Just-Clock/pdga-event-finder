@@ -10,12 +10,24 @@ BASE_URL = "https://www.pdga.com/player/"
 
 
 # -----------------------
-# EXTRACT MULTIPLE EVENTS
+# EXTRACT MULTIPLE EVENTS (UPDATED)
 # -----------------------
 def extract_all_events(text):
-    date_pattern = r"((Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+)?(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{1,2}(?:–\d{1,2})?,\s\d{4}"
+    """
+    Supports:
+    - May 3–5, 2026
+    - June 10, 2026
+    - 12-Jul-2026 to 14-Jul-2026
+    """
 
-    matches = list(re.finditer(date_pattern, text))
+    date_pattern = r"""(
+        ((Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+)?      # optional weekday
+        (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{1,2}(?:–\d{1,2})?,\s\d{4}
+        |
+        \d{1,2}-[A-Za-z]{3}-\d{4}(?:\s+to\s+\d{1,2}-[A-Za-z]{3}-\d{4})?
+    )"""
+
+    matches = list(re.finditer(date_pattern, text, re.VERBOSE))
     events = []
 
     for i, match in enumerate(matches):
@@ -36,8 +48,6 @@ def extract_all_events(text):
             end = len(text)
 
         event_name = text[start:end].strip()
-
-        # Clean leading junk
         event_name = re.sub(r"^[:\-\s]+", "", event_name)
 
         events.append((cleaned_date, event_name))
@@ -46,19 +56,25 @@ def extract_all_events(text):
 
 
 # -----------------------
-# NORMALIZE DATE
+# NORMALIZE DATE (UPDATED)
 # -----------------------
 def normalize_date(date_str):
     try:
-        # Convert range → first day only
+        # Handle "12-Jul-2026 to 14-Jul-2026"
+        if "to" in date_str:
+            first_part = date_str.split("to")[0].strip()
+            return datetime.strptime(first_part, "%d-%b-%Y")
+
+        # Handle "May 3–5, 2026"
         date_str = re.sub(r"–\d{1,2}", "", date_str)
         return datetime.strptime(date_str, "%B %d, %Y")
+
     except:
         return None
 
 
 # -----------------------
-# SCRAPE ONE PLAYER → MULTIPLE ROWS
+# SCRAPE PLAYER
 # -----------------------
 def get_player_rows(pdga_number):
     url = f"{BASE_URL}{pdga_number}"
@@ -68,11 +84,9 @@ def get_player_rows(pdga_number):
         response = requests.get(url, timeout=10)
         soup = BeautifulSoup(response.text, "html.parser")
 
-        # Player name
         name_tag = soup.find("h1")
         name = name_tag.text.strip() if name_tag else "Unknown"
 
-        # Find Upcoming Events section
         details_blocks = soup.find_all("details")
 
         upcoming_text = None
@@ -91,7 +105,6 @@ def get_player_rows(pdga_number):
                 "Event": "None"
             }]
 
-        # Clean label
         cleaned = upcoming_text.replace("Upcoming Events", "").strip()
 
         events = extract_all_events(cleaned)
@@ -123,7 +136,7 @@ def run_scraper(numbers):
 
     for n in numbers:
         all_rows.extend(get_player_rows(n))
-        time.sleep(0.4)  # be polite
+        time.sleep(0.4)
 
     return all_rows
 
