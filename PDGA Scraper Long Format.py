@@ -14,17 +14,14 @@ BASE_URL = "https://www.pdga.com/player/"
 # -----------------------
 def extract_all_events(text):
     """
-    Supports:
-    - May 3–5, 2026
-    - June 10, 2026
-    - 12-Jul-2026 to 14-Jul-2026
+    Extract events using ONLY the first date in any string
     """
 
     date_pattern = r"""(
-        ((Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+)?      # optional weekday
-        (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{1,2}(?:–\d{1,2})?,\s\d{4}
+        ((Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+)?   # optional weekday
+        (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{1,2},\s\d{4}
         |
-        \d{1,2}-[A-Za-z]{3}-\d{4}(?:\s+to\s+\d{1,2}-[A-Za-z]{3}-\d{4})?
+        \d{1,2}-[A-Za-z]{3}-\d{4}
     )"""
 
     matches = list(re.finditer(date_pattern, text, re.VERBOSE))
@@ -48,6 +45,8 @@ def extract_all_events(text):
             end = len(text)
 
         event_name = text[start:end].strip()
+
+        # Clean junk
         event_name = re.sub(r"^[:\-\s]+", "", event_name)
 
         events.append((cleaned_date, event_name))
@@ -60,13 +59,11 @@ def extract_all_events(text):
 # -----------------------
 def normalize_date(date_str):
     try:
-        # Handle "12-Jul-2026 to 14-Jul-2026"
-        if "to" in date_str:
-            first_part = date_str.split("to")[0].strip()
-            return datetime.strptime(first_part, "%d-%b-%Y")
+        # Format: 12-Jul-2026
+        if "-" in date_str:
+            return datetime.strptime(date_str, "%d-%b-%Y")
 
-        # Handle "May 3–5, 2026"
-        date_str = re.sub(r"–\d{1,2}", "", date_str)
+        # Format: May 3, 2026
         return datetime.strptime(date_str, "%B %d, %Y")
 
     except:
