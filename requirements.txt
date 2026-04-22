@@ -4,3 +4,4 @@ beautifulsoup4
 pandas
 openpyxl
 httpx==0.27.0
+supabase
