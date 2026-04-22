@@ -145,6 +145,8 @@ def get_player_rows(pdga_number):
 
         cleaned = upcoming_text.replace("Upcoming Events", "").strip()
 
+        cleaned = re.sub(r"\s+", " ", cleaned)
+
         events = extract_all_events(cleaned)
 
         for date_str, event_name in events:
