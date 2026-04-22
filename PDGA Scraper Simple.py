@@ -11,30 +11,36 @@ BASE_URL = "https://www.pdga.com/player/"
 # -----------------------
 # DATE PARSER (KEY FIX)
 # -----------------------
+import re
+
 def extract_event_and_date(text):
     """
-    Extract:
-    - Event name
-    - Date string (Month Day–Day, Year)
+    Pattern: DATE comes first, then EVENT NAME
+    Example:
+    "May 3–5, 2026 Spring Classic"
     """
 
-    # Match date patterns like:
-    # May 3–5, 2026
-    # June 10, 2026
-    date_match = re.search(
-        r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{1,2}(?:–\d{1,2})?,\s\d{4}",
-        text
+    # Match PDGA-style dates
+    date_pattern = r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{1,2}(?:–\d{1,2})?,\s\d{4}"
+
+    match = re.search(date_pattern, text)
+
+    if not match:
+        return "", ""
+
+    full_date = match.group(0)
+
+    # 🔥 Remove weekday from beginning
+    cleaned_date = re.sub(
+        r"^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+",
+        "",
+        full_date
     )
 
-    if not date_match:
-        return text.strip(), ""
+    # EVERYTHING after the date = event name
+    event_name = text.split(full_date, 1)[1].strip()
 
-    date = date_match.group(0)
-
-    # Event name = everything before the date
-    event_name = text.split(date)[0].strip()
-
-    return event_name, date
+    return event_name, cleaned_date
 
 
 # -----------------------
