@@ -21,48 +21,46 @@ def get_player_data(pdga_number):
         name_tag = soup.find("h1")
         name = name_tag.text.strip() if name_tag else "Unknown"
 
-        # Upcoming events section
-        upcoming = soup.find("div", {"id": "upcoming-events"})
+        # Find ALL tables (more reliable than dropdown div)
+        tables = soup.find_all("table")
 
-        if not upcoming:
-            return {
-                "PDGA": pdga_number,
-                "Name": name,
-                "Next Event": "None",
-                "Date": "",
-                "Location": "",
-                "Event Link": ""
-            }
+        for table in tables:
+            rows = table.find_all("tr")
 
-        rows = upcoming.find_all("tr")
+            for row in rows:
+                cols = row.find_all("td")
 
-        for row in rows[1:]:  # skip header
-            cols = row.find_all("td")
+                # Look for event-like rows
+                if len(cols) >= 3:
+                    event_name = cols[0].text.strip()
+                    event_date = cols[1].text.strip()
+                    location = cols[2].text.strip()
 
-            if len(cols) >= 3:
-                event_name = cols[0].text.strip()
-                event_date = cols[1].text.strip()
-                location = cols[2].text.strip()
+                    # Heuristic: skip junk rows
+                    if not event_name or "Date" in event_date:
+                        continue
 
-                link_tag = cols[0].find("a")
-                event_link = (
-                    "https://www.pdga.com" + link_tag["href"]
-                    if link_tag else ""
-                )
+                    # Extract link if present
+                    link_tag = cols[0].find("a")
+                    event_link = (
+                        "https://www.pdga.com" + link_tag["href"]
+                        if link_tag else ""
+                    )
 
-                return {
-                    "PDGA": pdga_number,
-                    "Name": name,
-                    "Next Event": event_name,
-                    "Date": event_date,
-                    "Location": location,
-                    "Event Link": event_link
-                }
+                    return {
+                        "PDGA": pdga_number,
+                        "Name": name,
+                        "Next Event": event_name,
+                        "Date": event_date,
+                        "Location": location,
+                        "Event Link": event_link
+                    }
 
+        # If nothing found
         return {
             "PDGA": pdga_number,
             "Name": name,
-            "Next Event": "None",
+            "Next Event": "None Found",
             "Date": "",
             "Location": "",
             "Event Link": ""
