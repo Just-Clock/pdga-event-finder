@@ -13,35 +13,60 @@ BASE_URL = "https://www.pdga.com/player/"
 # EXTRACT MULTIPLE EVENTS (UPDATED)
 # -----------------------
 def extract_all_events(text):
+    """
+    More robust parser:
+    - Splits text by dates
+    - Pairs each date with following event text
+    """
+
     date_pattern = r"""(
-        ((Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+)?  
+        (Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+
+        (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{1,2}(?:–\d{1,2})?,\s\d{4}
+        |
         (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{1,2}(?:–\d{1,2})?,\s\d{4}
         |
         \d{1,2}-[A-Za-z]{3}-\d{4}
     )"""
 
+    # Find all date matches
     matches = list(re.finditer(date_pattern, text, re.VERBOSE))
+
+    if not matches:
+        return []
+
     events = []
 
-    for i, match in enumerate(matches):
-        full_date = match.group(0)
+    # Split text into chunks starting at each date
+    split_points = [m.start() for m in matches] + [len(text)]
 
-        # Remove weekday
+    for i in range(len(matches)):
+        start = split_points[i]
+        end = split_points[i + 1]
+
+        chunk = text[start:end].strip()
+
+        # Extract date from start of chunk
+        date_match = re.match(date_pattern, chunk, re.VERBOSE)
+        if not date_match:
+            continue
+
+        full_date = date_match.group(0)
+
+        # Clean date (remove weekday)
         cleaned_date = re.sub(
             r"^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+",
             "",
             full_date
         )
 
-        start = match.end()
+        # Remove date from chunk → remaining is event name
+        event_name = chunk[len(full_date):].strip()
 
-        if i + 1 < len(matches):
-            end = matches[i + 1].start()
-        else:
-            end = len(text)
-
-        event_name = text[start:end].strip()
+        # Clean junk prefixes
         event_name = re.sub(r"^[:\-\s]+", "", event_name)
+
+        # 🔥 IMPORTANT: stop at next sentence-ish boundary
+        event_name = re.split(r"\s{2,}|\.\s", event_name)[0].strip()
 
         events.append((cleaned_date, event_name))
 
