@@ -13,13 +13,9 @@ BASE_URL = "https://www.pdga.com/player/"
 # EXTRACT MULTIPLE EVENTS (UPDATED)
 # -----------------------
 def extract_all_events(text):
-    """
-    Extract events using ONLY the first date in any string
-    """
-
     date_pattern = r"""(
-        ((Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+)?   # optional weekday
-        (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{1,2},\s\d{4}
+        ((Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+)?  
+        (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{1,2}(?:–\d{1,2})?,\s\d{4}
         |
         \d{1,2}-[A-Za-z]{3}-\d{4}
     )"""
@@ -45,8 +41,6 @@ def extract_all_events(text):
             end = len(text)
 
         event_name = text[start:end].strip()
-
-        # Clean junk
         event_name = re.sub(r"^[:\-\s]+", "", event_name)
 
         events.append((cleaned_date, event_name))
@@ -59,11 +53,12 @@ def extract_all_events(text):
 # -----------------------
 def normalize_date(date_str):
     try:
-        # Format: 12-Jul-2026
+        # Handle "May 3–5, 2026" → "May 3, 2026"
+        date_str = re.sub(r"–\d{1,2}", "", date_str)
+
         if "-" in date_str:
             return datetime.strptime(date_str, "%d-%b-%Y")
 
-        # Format: May 3, 2026
         return datetime.strptime(date_str, "%B %d, %Y")
 
     except:
@@ -114,6 +109,11 @@ def get_player_rows(pdga_number):
                 "Event": event_name
             })
 
+        df = df.sort_values(by="Date", ascending=True, na_position="last")
+
+        # 🔥 CLEAN DISPLAY
+        df["Date"] = df["Date"].dt.date
+
         return rows
 
     except Exception as e:
@@ -122,6 +122,8 @@ def get_player_rows(pdga_number):
             "Name": "Error",
             "Date": None,
             "Event": str(e)
+
+
         }]
 
 
