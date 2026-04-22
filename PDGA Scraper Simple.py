@@ -2,9 +2,34 @@ import streamlit as st
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
+import re
 import time
 
 BASE_URL = "https://www.pdga.com/player/"
+
+
+# -----------------------
+# PARSER
+# -----------------------
+def parse_event_text(text):
+    """
+    Extract:
+    - Event Name
+    - Start Date (single date or range collapsed to one)
+    """
+
+    # Pull text inside parentheses
+    match = re.search(r"\((.*?)\)", text)
+
+    if not match:
+        return text.strip(), ""
+
+    date_part = match.group(1).strip()
+
+    # Event name is everything before "("
+    event_name = text.split("(")[0].strip()
+
+    return event_name, date_part
 
 
 # -----------------------
@@ -21,14 +46,13 @@ def get_player_data(pdga_number):
         name_tag = soup.find("h1")
         name = name_tag.text.strip() if name_tag else "Unknown"
 
-        # Find <details> with "Upcoming"
+        # Find correct <details> section
         details_sections = soup.find_all("details")
 
         upcoming_text = None
+
         for d in details_sections:
             title_attr = d.get("title", "")
-
-            # Check both title and summary text
             summary = d.find("summary")
             summary_text = summary.text if summary else ""
 
@@ -40,47 +64,40 @@ def get_player_data(pdga_number):
             return {
                 "PDGA": pdga_number,
                 "Name": name,
-                "Next Event": "None",
-                "Date": "",
-                "Location": ""
+                "Event": "None",
+                "Date": ""
             }
 
-        # Clean up text (remove "Upcoming Events" label)
+        # Clean label text
         cleaned = upcoming_text.replace("Upcoming Events", "").strip()
 
-        # Try to split event + date (basic heuristic)
-        # Example: "John is registered for the Spring Classic (May 3–5)"
-        event_name = cleaned
-        event_date = ""
-
-        if "(" in cleaned and ")" in cleaned:
-            event_name = cleaned.split("(")[0].strip()
-            event_date = cleaned.split("(")[1].replace(")", "").strip()
+        event_name, event_date = parse_event_text(cleaned)
 
         return {
             "PDGA": pdga_number,
             "Name": name,
-            "Next Event": event_name,
-            "Date": event_date,
-            "Location": ""
+            "Event": event_name,
+            "Date": event_date
         }
 
     except Exception as e:
         return {
             "PDGA": pdga_number,
             "Name": "Error",
-            "Next Event": str(e),
-            "Date": "",
-            "Location": ""
+            "Event": str(e),
+            "Date": ""
         }
 
 
+# -----------------------
+# RUNNER
+# -----------------------
 def run_scraper(pdga_numbers):
     results = []
 
     for num in pdga_numbers:
         results.append(get_player_data(num))
-        time.sleep(0.5)  # be nice to PDGA servers
+        time.sleep(0.5)  # be polite to PDGA servers
 
     return results
 
@@ -88,28 +105,30 @@ def run_scraper(pdga_numbers):
 # -----------------------
 # UI
 # -----------------------
-st.title("🥏 PDGA Next Event Finder")
+st.title("🥏 PDGA Next Event Finder (Simple)")
 
-st.write("Paste PDGA numbers (comma or newline separated)")
+st.write("Enter PDGA numbers separated by commas or new lines")
 
 input_text = st.text_area("PDGA Numbers")
 
 if st.button("Find Events"):
     if input_text.strip():
+
         try:
             numbers = [
                 int(x.strip())
                 for x in input_text.replace(",", "\n").split()
+                if x.strip().isdigit()
             ]
 
-            with st.spinner("Fetching events..."):
+            with st.spinner("Fetching PDGA data..."):
                 data = run_scraper(numbers)
                 df = pd.DataFrame(data)
 
             st.success("Done!")
             st.dataframe(df)
 
-            # Excel download
+            # Excel export
             file_name = "pdga_events.xlsx"
             df.to_excel(file_name, index=False)
 
@@ -120,5 +139,5 @@ if st.button("Find Events"):
                     file_name=file_name
                 )
 
-        except:
-            st.error("Please enter valid PDGA numbers.")
+        except Exception as e:
+            st.error(f"Error: {e}")
