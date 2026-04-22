@@ -9,27 +9,32 @@ BASE_URL = "https://www.pdga.com/player/"
 
 
 # -----------------------
-# PARSER
+# DATE PARSER (KEY FIX)
 # -----------------------
-def parse_event_text(text):
+def extract_event_and_date(text):
     """
     Extract:
-    - Event Name
-    - Start Date (single date or range collapsed to one)
+    - Event name
+    - Date string (Month Day–Day, Year)
     """
 
-    # Pull text inside parentheses
-    match = re.search(r"\((.*?)\)", text)
+    # Match date patterns like:
+    # May 3–5, 2026
+    # June 10, 2026
+    date_match = re.search(
+        r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{1,2}(?:–\d{1,2})?,\s\d{4}",
+        text
+    )
 
-    if not match:
+    if not date_match:
         return text.strip(), ""
 
-    date_part = match.group(1).strip()
+    date = date_match.group(0)
 
-    # Event name is everything before "("
-    event_name = text.split("(")[0].strip()
+    # Event name = everything before the date
+    event_name = text.split(date)[0].strip()
 
-    return event_name, date_part
+    return event_name, date
 
 
 # -----------------------
@@ -46,17 +51,16 @@ def get_player_data(pdga_number):
         name_tag = soup.find("h1")
         name = name_tag.text.strip() if name_tag else "Unknown"
 
-        # Find correct <details> section
-        details_sections = soup.find_all("details")
+        # Find correct <details> block
+        details_blocks = soup.find_all("details")
 
         upcoming_text = None
 
-        for d in details_sections:
-            title_attr = d.get("title", "")
+        for d in details_blocks:
             summary = d.find("summary")
-            summary_text = summary.text if summary else ""
+            summary_text = summary.text.lower() if summary else ""
 
-            if "upcoming" in title_attr.lower() or "upcoming" in summary_text.lower():
+            if "upcoming" in summary_text:
                 upcoming_text = d.get_text(" ", strip=True)
                 break
 
@@ -68,10 +72,10 @@ def get_player_data(pdga_number):
                 "Date": ""
             }
 
-        # Clean label text
+        # Clean noise
         cleaned = upcoming_text.replace("Upcoming Events", "").strip()
 
-        event_name, event_date = parse_event_text(cleaned)
+        event_name, event_date = extract_event_and_date(cleaned)
 
         return {
             "PDGA": pdga_number,
@@ -92,12 +96,12 @@ def get_player_data(pdga_number):
 # -----------------------
 # RUNNER
 # -----------------------
-def run_scraper(pdga_numbers):
+def run_scraper(numbers):
     results = []
 
-    for num in pdga_numbers:
-        results.append(get_player_data(num))
-        time.sleep(0.5)  # be polite to PDGA servers
+    for n in numbers:
+        results.append(get_player_data(n))
+        time.sleep(0.4)
 
     return results
 
@@ -105,39 +109,27 @@ def run_scraper(pdga_numbers):
 # -----------------------
 # UI
 # -----------------------
-st.title("🥏 PDGA Next Event Finder (Simple)")
+st.title("🥏 PDGA Next Event Finder")
 
-st.write("Enter PDGA numbers separated by commas or new lines")
+input_text = st.text_area("Enter PDGA numbers (comma or newline separated)")
 
-input_text = st.text_area("PDGA Numbers")
+if st.button("Fetch Events"):
 
-if st.button("Find Events"):
-    if input_text.strip():
+    numbers = [
+        int(x.strip())
+        for x in input_text.replace(",", "\n").split()
+        if x.strip().isdigit()
+    ]
 
-        try:
-            numbers = [
-                int(x.strip())
-                for x in input_text.replace(",", "\n").split()
-                if x.strip().isdigit()
-            ]
+    with st.spinner("Scraping PDGA data..."):
+        data = run_scraper(numbers)
+        df = pd.DataFrame(data)
 
-            with st.spinner("Fetching PDGA data..."):
-                data = run_scraper(numbers)
-                df = pd.DataFrame(data)
+    st.success("Done")
+    st.dataframe(df)
 
-            st.success("Done!")
-            st.dataframe(df)
+    file = "pdga_events.xlsx"
+    df.to_excel(file, index=False)
 
-            # Excel export
-            file_name = "pdga_events.xlsx"
-            df.to_excel(file_name, index=False)
-
-            with open(file_name, "rb") as f:
-                st.download_button(
-                    "📥 Download Excel",
-                    f,
-                    file_name=file_name
-                )
-
-        except Exception as e:
-            st.error(f"Error: {e}")
+    with open(file, "rb") as f:
+        st.download_button("Download Excel", f, file_name=file)
