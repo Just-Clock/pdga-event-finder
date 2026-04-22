@@ -125,4 +125,4 @@ if st.button("Find Events"):
                 )
 
         except:
-            st.error("Please enter valid PDGA numbers.")            )
+            st.error("Please enter valid PDGA numbers.")
