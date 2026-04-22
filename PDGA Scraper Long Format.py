@@ -109,10 +109,6 @@ def get_player_rows(pdga_number):
                 "Event": event_name
             })
 
-        df = df.sort_values(by="Date", ascending=True, na_position="last")
-
-        # 🔥 CLEAN DISPLAY
-        df["Date"] = df["Date"].dt.date
 
         return rows
 
@@ -161,6 +157,9 @@ if st.button("Fetch Events"):
 
     # Sort by soonest upcoming
     df = df.sort_values(by="Date", ascending=True, na_position="last")
+
+    # 🔥 CLEAN DISPLAY
+    df["Date"] = df["Date"].dt.date
 
     st.success("Done!")
     st.dataframe(df)
