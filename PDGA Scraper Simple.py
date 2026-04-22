@@ -21,49 +21,48 @@ def get_player_data(pdga_number):
         name_tag = soup.find("h1")
         name = name_tag.text.strip() if name_tag else "Unknown"
 
-        # Find ALL tables (more reliable than dropdown div)
-        tables = soup.find_all("table")
+        # Find <details> with "Upcoming"
+        details_sections = soup.find_all("details")
 
-        for table in tables:
-            rows = table.find_all("tr")
+        upcoming_text = None
+        for d in details_sections:
+            title_attr = d.get("title", "")
 
-            for row in rows:
-                cols = row.find_all("td")
+            # Check both title and summary text
+            summary = d.find("summary")
+            summary_text = summary.text if summary else ""
 
-                # Look for event-like rows
-                if len(cols) >= 3:
-                    event_name = cols[0].text.strip()
-                    event_date = cols[1].text.strip()
-                    location = cols[2].text.strip()
+            if "upcoming" in title_attr.lower() or "upcoming" in summary_text.lower():
+                upcoming_text = d.get_text(" ", strip=True)
+                break
 
-                    # Heuristic: skip junk rows
-                    if not event_name or "Date" in event_date:
-                        continue
+        if not upcoming_text:
+            return {
+                "PDGA": pdga_number,
+                "Name": name,
+                "Next Event": "None",
+                "Date": "",
+                "Location": ""
+            }
 
-                    # Extract link if present
-                    link_tag = cols[0].find("a")
-                    event_link = (
-                        "https://www.pdga.com" + link_tag["href"]
-                        if link_tag else ""
-                    )
+        # Clean up text (remove "Upcoming Events" label)
+        cleaned = upcoming_text.replace("Upcoming Events", "").strip()
 
-                    return {
-                        "PDGA": pdga_number,
-                        "Name": name,
-                        "Next Event": event_name,
-                        "Date": event_date,
-                        "Location": location,
-                        "Event Link": event_link
-                    }
+        # Try to split event + date (basic heuristic)
+        # Example: "John is registered for the Spring Classic (May 3–5)"
+        event_name = cleaned
+        event_date = ""
 
-        # If nothing found
+        if "(" in cleaned and ")" in cleaned:
+            event_name = cleaned.split("(")[0].strip()
+            event_date = cleaned.split("(")[1].replace(")", "").strip()
+
         return {
             "PDGA": pdga_number,
             "Name": name,
-            "Next Event": "None Found",
-            "Date": "",
-            "Location": "",
-            "Event Link": ""
+            "Next Event": event_name,
+            "Date": event_date,
+            "Location": ""
         }
 
     except Exception as e:
@@ -72,8 +71,7 @@ def get_player_data(pdga_number):
             "Name": "Error",
             "Next Event": str(e),
             "Date": "",
-            "Location": "",
-            "Event Link": ""
+            "Location": ""
         }
 
 
