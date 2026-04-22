@@ -20,12 +20,24 @@ def extract_all_events(text):
     """
 
     date_pattern = r"""(
-        (Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+
+        # Weekday + Month format
+        ((Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+)?
         (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{1,2}(?:–\d{1,2})?,\s\d{4}
+
         |
-        (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{1,2}(?:–\d{1,2})?,\s\d{4}
-        |
+
+        # DD-MMM-YYYY
         \d{1,2}-[A-Za-z]{3}-\d{4}
+
+        |
+
+        # MM/DD/YYYY or M/D/YYYY
+        \d{1,2}/\d{1,2}/\d{4}
+
+        |
+
+        # DD Mon YYYY (e.g., 15 Jul 2026)
+        \d{1,2}\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{4}
     )"""
 
     # Find all date matches
@@ -78,12 +90,21 @@ def extract_all_events(text):
 # -----------------------
 def normalize_date(date_str):
     try:
-        # Handle "May 3–5, 2026" → "May 3, 2026"
         date_str = re.sub(r"–\d{1,2}", "", date_str)
 
-        if "-" in date_str:
+        # 12-Jul-2026
+        if "-" in date_str and date_str.count("-") == 2:
             return datetime.strptime(date_str, "%d-%b-%Y")
 
+        # 6/15/2026
+        if "/" in date_str:
+            return datetime.strptime(date_str, "%m/%d/%Y")
+
+        # 15 Jul 2026
+        if re.match(r"\d{1,2}\s+[A-Za-z]+", date_str):
+            return datetime.strptime(date_str, "%d %b %Y")
+
+        # May 3, 2026
         return datetime.strptime(date_str, "%B %d, %Y")
 
     except:
