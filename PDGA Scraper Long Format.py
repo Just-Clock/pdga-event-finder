@@ -122,20 +122,21 @@ def get_player_rows(pdga_number):
         response = requests.get(url, timeout=10)
         soup = BeautifulSoup(response.text, "html.parser")
 
+        # Player name
         name_tag = soup.find("h1")
         name = name_tag.text.strip() if name_tag else "Unknown"
 
+        # Find Upcoming Events section
         details_blocks = soup.find_all("details")
 
-        upcoming_text = None
-
+        upcoming_section = None
         for d in details_blocks:
             summary = d.find("summary")
             if summary and "upcoming" in summary.text.lower():
-                upcoming_text = d.get_text(" ", strip=True)
+                upcoming_section = d
                 break
 
-        if not upcoming_text:
+        if not upcoming_section:
             return [{
                 "PDGA": pdga_number,
                 "Name": name,
@@ -143,22 +144,47 @@ def get_player_rows(pdga_number):
                 "Event": "None"
             }]
 
-        cleaned = upcoming_text.replace("Upcoming Events", "").strip()
+        # 🔥 Find all event links
+        links = upcoming_section.find_all("a", href=True)
 
-        cleaned = re.sub(r"\s+", " ", cleaned)
+        for link in links:
+            href = link["href"]
 
-        events = extract_all_events(cleaned)
+            # Only keep PDGA event links
+            if "/event/" not in href and "/tour/event/" not in href:
+                continue
 
-        for date_str, event_name in events:
+            event_name = link.get_text(strip=True)
+
+            # 🔍 Find surrounding text for date
+            parent_text = link.parent.get_text(" ", strip=True)
+
+            # Extract date from that chunk
+            date_match = re.search(
+                r"((Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+)?"
+                r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{1,2}(?:–\d{1,2})?,\s\d{4}"
+                r"|"
+                r"\d{1,2}-[A-Za-z]{3}-\d{4}"
+                r"|"
+                r"\d{1,2}/\d{1,2}/\d{4}",
+                parent_text
+            )
+
+            date_str = date_match.group(0) if date_match else None
+
             rows.append({
                 "PDGA": pdga_number,
                 "Name": name,
-                "Date": normalize_date(date_str),
+                "Date": normalize_date(date_str) if date_str else None,
                 "Event": event_name
             })
 
-
-        return rows
+        return rows if rows else [{
+            "PDGA": pdga_number,
+            "Name": name,
+            "Date": None,
+            "Event": "None"
+        }]
 
     except Exception as e:
         return [{
@@ -166,8 +192,6 @@ def get_player_rows(pdga_number):
             "Name": "Error",
             "Date": None,
             "Event": str(e)
-
-
         }]
 
 
