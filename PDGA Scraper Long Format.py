@@ -53,14 +53,13 @@ def get_player_rows(pdga_number):
         response = requests.get(url, timeout=10)
         soup = BeautifulSoup(response.text, "html.parser")
 
-        # Player name
         name_tag = soup.find("h1")
         name = name_tag.text.strip() if name_tag else "Unknown"
 
-        # Find Upcoming Events section
+        # Find Upcoming section
         details_blocks = soup.find_all("details")
-
         upcoming_section = None
+
         for d in details_blocks:
             summary = d.find("summary")
             if summary and "upcoming" in summary.text.lower():
@@ -76,43 +75,64 @@ def get_player_rows(pdga_number):
                 "Event URL": ""
             }]
 
-        # Normalize whitespace (important)
-        section_text = upcoming_section.get_text(" ", strip=True)
-        section_text = re.sub(r"\s+", " ", section_text)
+        # 🔥 FULL TEXT (critical fix)
+        full_text = upcoming_section.get_text(" ", strip=True)
+        full_text = re.sub(r"\s+", " ", full_text)
 
-        # Find all event links
+        # 🔥 Find ALL dates in full text
+        date_pattern = r"""(
+            (Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+
+            (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{1,2}(?:–\d{1,2})?,\s\d{4}
+            |
+            (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{1,2}(?:–\d{1,2})?,\s\d{4}
+            |
+            \d{1,2}-[A-Za-z]{3}-\d{4}
+            |
+            \d{1,2}/\d{1,2}/\d{4}
+        )"""
+
+        date_matches = list(re.finditer(date_pattern, full_text, re.VERBOSE))
+
+        # Store (position, cleaned_date)
+        parsed_dates = []
+        for m in date_matches:
+            raw_date = m.group(0)
+
+            cleaned_date = re.sub(
+                r"^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+",
+                "",
+                raw_date
+            )
+
+            parsed_dates.append((m.start(), cleaned_date))
+
+        # 🔥 Extract event links
         links = upcoming_section.find_all("a", href=True)
 
         for link in links:
             href = link["href"]
 
-            # Only keep event links
             if "/event/" not in href and "/tour/event/" not in href:
                 continue
 
             event_name = link.get_text(strip=True)
 
-            # Extract surrounding text for date
-            parent_text = link.parent.get_text(" ", strip=True)
-            parent_text = re.sub(r"\s+", " ", parent_text)
+            # Find link position in full text
+            link_text = link.get_text(strip=True)
+            link_pos = full_text.find(link_text)
 
-            # Find date near this link
-            date_match = re.search(
-                r"((Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+)?"
-                r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{1,2}(?:–\d{1,2})?,\s\d{4}"
-                r"|"
-                r"\d{1,2}-[A-Za-z]{3}-\d{4}"
-                r"|"
-                r"\d{1,2}/\d{1,2}/\d{4}",
-                parent_text
-            )
+            # Find closest date BEFORE this link
+            event_date = None
 
-            date_str = date_match.group(0) if date_match else None
+            for pos, d in reversed(parsed_dates):
+                if pos <= link_pos:
+                    event_date = d
+                    break
 
             rows.append({
                 "PDGA": pdga_number,
                 "Name": name,
-                "Date": normalize_date(date_str),
+                "Date": normalize_date(event_date),
                 "Event": event_name,
                 "Event URL": f"https://www.pdga.com{href}"
             })
