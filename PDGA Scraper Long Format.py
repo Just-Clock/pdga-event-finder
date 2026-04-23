@@ -10,101 +10,32 @@ BASE_URL = "https://www.pdga.com/player/"
 
 
 # -----------------------
-# EXTRACT MULTIPLE EVENTS (UPDATED)
-# -----------------------
-def extract_all_events(text):
-    """
-    More robust parser:
-    - Splits text by dates
-    - Pairs each date with following event text
-    """
-
-    date_pattern = r"""(
-        # Weekday + Month format
-        ((Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+)?
-        (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{1,2}(?:–\d{1,2})?,\s\d{4}
-
-        |
-
-        # DD-MMM-YYYY
-        \d{1,2}-[A-Za-z]{3}-\d{4}
-
-        |
-
-        # MM/DD/YYYY or M/D/YYYY
-        \d{1,2}/\d{1,2}/\d{4}
-
-        |
-
-        # DD Mon YYYY (e.g., 15 Jul 2026)
-        \d{1,2}\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{4}
-    )"""
-
-    # Find all date matches
-    matches = list(re.finditer(date_pattern, text, re.VERBOSE))
-
-    if not matches:
-        return []
-
-    events = []
-
-    # Split text into chunks starting at each date
-    split_points = [m.start() for m in matches] + [len(text)]
-
-    for i in range(len(matches)):
-        start = split_points[i]
-        end = split_points[i + 1]
-
-        chunk = text[start:end].strip()
-
-        # Extract date from start of chunk
-        date_match = re.match(date_pattern, chunk, re.VERBOSE)
-        if not date_match:
-            continue
-
-        full_date = date_match.group(0)
-
-        # Clean date (remove weekday)
-        cleaned_date = re.sub(
-            r"^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+",
-            "",
-            full_date
-        )
-
-        # Remove date from chunk → remaining is event name
-        event_name = chunk[len(full_date):].strip()
-
-        # Clean junk prefixes
-        event_name = re.sub(r"^[:\-\s]+", "", event_name)
-
-        # 🔥 IMPORTANT: stop at next sentence-ish boundary
-        event_name = re.split(r"\s{2,}|\.\s", event_name)[0].strip()
-
-        events.append((cleaned_date, event_name))
-
-    return events
-
-
-# -----------------------
-# NORMALIZE DATE (UPDATED)
+# DATE NORMALIZER
 # -----------------------
 def normalize_date(date_str):
+    if not date_str:
+        return None
+
     try:
+        # Remove weekday if present
+        date_str = re.sub(
+            r"^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+",
+            "",
+            date_str
+        )
+
+        # Handle ranges like "May 3–5, 2026"
         date_str = re.sub(r"–\d{1,2}", "", date_str)
 
-        # 12-Jul-2026
+        # Format: 12-Jul-2026
         if "-" in date_str and date_str.count("-") == 2:
             return datetime.strptime(date_str, "%d-%b-%Y")
 
-        # 6/15/2026
+        # Format: 6/15/2026
         if "/" in date_str:
             return datetime.strptime(date_str, "%m/%d/%Y")
 
-        # 15 Jul 2026
-        if re.match(r"\d{1,2}\s+[A-Za-z]+", date_str):
-            return datetime.strptime(date_str, "%d %b %Y")
-
-        # May 3, 2026
+        # Format: May 3, 2026
         return datetime.strptime(date_str, "%B %d, %Y")
 
     except:
@@ -112,7 +43,7 @@ def normalize_date(date_str):
 
 
 # -----------------------
-# SCRAPE PLAYER
+# SCRAPE PLAYER (LINK-BASED)
 # -----------------------
 def get_player_rows(pdga_number):
     url = f"{BASE_URL}{pdga_number}"
@@ -141,25 +72,31 @@ def get_player_rows(pdga_number):
                 "PDGA": pdga_number,
                 "Name": name,
                 "Date": None,
-                "Event": "None"
+                "Event": "None",
+                "Event URL": ""
             }]
 
-        # 🔥 Find all event links
+        # Normalize whitespace (important)
+        section_text = upcoming_section.get_text(" ", strip=True)
+        section_text = re.sub(r"\s+", " ", section_text)
+
+        # Find all event links
         links = upcoming_section.find_all("a", href=True)
 
         for link in links:
             href = link["href"]
 
-            # Only keep PDGA event links
+            # Only keep event links
             if "/event/" not in href and "/tour/event/" not in href:
                 continue
 
             event_name = link.get_text(strip=True)
 
-            # 🔍 Find surrounding text for date
+            # Extract surrounding text for date
             parent_text = link.parent.get_text(" ", strip=True)
+            parent_text = re.sub(r"\s+", " ", parent_text)
 
-            # Extract date from that chunk
+            # Find date near this link
             date_match = re.search(
                 r"((Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+)?"
                 r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{1,2}(?:–\d{1,2})?,\s\d{4}"
@@ -175,15 +112,17 @@ def get_player_rows(pdga_number):
             rows.append({
                 "PDGA": pdga_number,
                 "Name": name,
-                "Date": normalize_date(date_str) if date_str else None,
-                "Event": event_name
+                "Date": normalize_date(date_str),
+                "Event": event_name,
+                "Event URL": f"https://www.pdga.com{href}"
             })
 
         return rows if rows else [{
             "PDGA": pdga_number,
             "Name": name,
             "Date": None,
-            "Event": "None"
+            "Event": "None",
+            "Event URL": ""
         }]
 
     except Exception as e:
@@ -191,7 +130,8 @@ def get_player_rows(pdga_number):
             "PDGA": pdga_number,
             "Name": "Error",
             "Date": None,
-            "Event": str(e)
+            "Event": str(e),
+            "Event URL": ""
         }]
 
 
@@ -203,7 +143,7 @@ def run_scraper(numbers):
 
     for n in numbers:
         all_rows.extend(get_player_rows(n))
-        time.sleep(0.4)
+        time.sleep(0.4)  # be polite
 
     return all_rows
 
@@ -211,7 +151,7 @@ def run_scraper(numbers):
 # -----------------------
 # UI
 # -----------------------
-st.title("🥏 PDGA Event Tracker (Long Format)")
+st.title("🥏 PDGA Event Tracker (Link-Based)")
 
 input_text = st.text_area("Enter PDGA numbers (comma or newline separated)")
 
@@ -230,8 +170,8 @@ if st.button("Fetch Events"):
     # Sort by soonest upcoming
     df = df.sort_values(by="Date", ascending=True, na_position="last")
 
-    # 🔥 CLEAN DISPLAY
-    df["Date"] = df["Date"].dt.date
+    # Remove time from display
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.date
 
     st.success("Done!")
     st.dataframe(df)
