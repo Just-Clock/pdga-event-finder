@@ -48,62 +48,78 @@ def scrape_event_page(url):
         r = session.get(url, timeout=10)
         soup = BeautifulSoup(r.text, "html.parser")
 
-        # ONLY HEADER / SUMMARY AREA
-        header_parts = []
+        # -----------------------------------
+        # FIND "DATE:" LABELS DIRECTLY
+        # -----------------------------------
 
-        h1 = soup.find("h1")
-        if h1:
-            header_parts.append(h1.get_text(" ", strip=True))
+        text_blocks = soup.find_all(string=re.compile("Date", re.I))
 
-        h2 = soup.find("h2")
-        if h2:
-            header_parts.append(h2.get_text(" ", strip=True))
+        candidates = []
 
-        date_mentions = soup.find_all(string=re.compile("Date", re.I))
+        for block in text_blocks:
 
-        for d in date_mentions[:10]:
-            header_parts.append(d.parent.get_text(" ", strip=True))
+            parent = block.parent
 
-        header_text = " ".join(header_parts)
-        header_text = re.sub(r"\s+", " ", header_text)
+            if not parent:
+                continue
 
-        # DATE PATTERN
-        pattern = r"""(
-            (Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+
-            (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{1,2}(?:–\d{1,2})?,\s\d{4}
-            |
-            (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{1,2}(?:–\d{1,2})?,\s\d{4}
-            |
-            \d{1,2}-[A-Za-z]{3}-\d{4}
-            |
-            \d{1,2}/\d{1,2}/\d{4}
-        )"""
+            full_text = parent.get_text(" ", strip=True)
 
-        matches = re.findall(pattern, header_text, re.VERBOSE)
+            # look for something like "Date: May 3–5, 2026"
+            match = re.search(
+                r"Date[:\s]+(.+)",
+                full_text,
+                re.I
+            )
+
+            if match:
+                candidates.append(match.group(1))
+
+        # fallback: sometimes date is in event header line
+        if not candidates:
+
+            header = soup.find("h1")
+            if header:
+                candidates.append(header.get_text(" ", strip=True))
 
         dates = []
 
-        for m in matches:
+        for c in candidates:
 
-            raw = m[0] if isinstance(m, tuple) else m
+            # extract all date-like strings inside candidate
+            found = re.findall(
+                r"""
+                (?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)?\s*
+                (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{1,2}(?:–\d{1,2})?,\s\d{4}
+                |
+                \d{1,2}-[A-Za-z]{3}-\d{4}
+                |
+                \d{1,2}/\d{1,2}/\d{4}
+                """,
+                c,
+                re.VERBOSE
+            )
 
-            raw = re.sub(r"^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+", "", raw)
+            for raw in found:
 
-            try:
+                raw = re.sub(r"^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+", "", raw)
+                raw = re.sub(r"–\d{1,2}", "", raw)
 
-                if "-" in raw and raw.count("-") == 2:
-                    dt = datetime.strptime(raw, "%d-%b-%Y")
+                try:
 
-                elif "/" in raw:
-                    dt = datetime.strptime(raw, "%m/%d/%Y")
+                    if "-" in raw and raw.count("-") == 2:
+                        dt = datetime.strptime(raw, "%d-%b-%Y")
 
-                else:
-                    dt = datetime.strptime(raw, "%B %d, %Y")
+                    elif "/" in raw:
+                        dt = datetime.strptime(raw, "%m/%d/%Y")
 
-                dates.append(dt)
+                    else:
+                        dt = datetime.strptime(raw, "%B %d, %Y")
 
-            except:
-                continue
+                    dates.append(dt)
+
+                except:
+                    continue
 
         if not dates:
             return None, None
