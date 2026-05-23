@@ -48,78 +48,84 @@ def scrape_event_page(url):
         r = session.get(url, timeout=10)
         soup = BeautifulSoup(r.text, "html.parser")
 
-        # -----------------------------------
-        # FIND "DATE:" LABELS DIRECTLY
-        # -----------------------------------
+        dates = []
 
-        text_blocks = soup.find_all(string=re.compile("Date", re.I))
+        # -----------------------------
+        # CASE 1: label/value pairs
+        # -----------------------------
 
-        candidates = []
+        labels = soup.find_all(string=re.compile("^Date$", re.I))
 
-        for block in text_blocks:
+        for label in labels:
 
-            parent = block.parent
+            parent = label.parent
 
             if not parent:
                 continue
 
-            full_text = parent.get_text(" ", strip=True)
+            # try next sibling first
+            next_node = parent.find_next()
 
-            # look for something like "Date: May 3–5, 2026"
-            match = re.search(
-                r"Date[:\s]+(.+)",
-                full_text,
-                re.I
-            )
+            if next_node:
+                text = next_node.get_text(" ", strip=True)
 
-            if match:
-                candidates.append(match.group(1))
+                found = re.findall(
+                    r"""
+                    (?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)?\s*
+                    (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{1,2}(?:–\d{1,2})?,\s\d{4}
+                    |
+                    \d{1,2}-[A-Za-z]{3}-\d{4}
+                    |
+                    \d{1,2}/\d{1,2}/\d{4}
+                    """,
+                    text,
+                    re.VERBOSE
+                )
 
-        # fallback: sometimes date is in event header line
-        if not candidates:
+                for f in found:
 
-            header = soup.find("h1")
-            if header:
-                candidates.append(header.get_text(" ", strip=True))
+                    f = re.sub(r"–\d{1,2}", "", f)
 
-        dates = []
+                    try:
 
-        for c in candidates:
+                        if "-" in f and f.count("-") == 2:
+                            dt = datetime.strptime(f, "%d-%b-%Y")
 
-            # extract all date-like strings inside candidate
-            found = re.findall(
-                r"""
-                (?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)?\s*
-                (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{1,2}(?:–\d{1,2})?,\s\d{4}
-                |
-                \d{1,2}-[A-Za-z]{3}-\d{4}
-                |
-                \d{1,2}/\d{1,2}/\d{4}
-                """,
-                c,
-                re.VERBOSE
-            )
+                        elif "/" in f:
+                            dt = datetime.strptime(f, "%m/%d/%Y")
 
-            for raw in found:
+                        else:
+                            dt = datetime.strptime(f, "%B %d, %Y")
 
-                raw = re.sub(r"^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+", "", raw)
-                raw = re.sub(r"–\d{1,2}", "", raw)
+                        dates.append(dt)
 
-                try:
+                    except:
+                        continue
 
-                    if "-" in raw and raw.count("-") == 2:
-                        dt = datetime.strptime(raw, "%d-%b-%Y")
+        # -----------------------------
+        # CASE 2: fallback (header)
+        # -----------------------------
 
-                    elif "/" in raw:
-                        dt = datetime.strptime(raw, "%m/%d/%Y")
+        if not dates:
 
-                    else:
-                        dt = datetime.strptime(raw, "%B %d, %Y")
+            h1 = soup.find("h1")
 
-                    dates.append(dt)
+            if h1:
+                found = re.findall(
+                    r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{1,2}(?:–\d{1,2})?,\s\d{4}",
+                    h1.get_text(" ", strip=True)
+                )
 
-                except:
-                    continue
+                for f in found:
+
+                    try:
+                        dt = datetime.strptime(
+                            re.sub(r"–\d{1,2}", "", f),
+                            "%B %d, %Y"
+                        )
+                        dates.append(dt)
+                    except:
+                        continue
 
         if not dates:
             return None, None
