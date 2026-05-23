@@ -10,12 +10,12 @@ BASE_URL = "https://www.pdga.com"
 PLAYER_URL = "https://www.pdga.com/player/"
 
 HEADERS = {
-    "User-Agent":"Mozilla/5.0"
+    "User-Agent": "Mozilla/5.0"
 }
 
 
 # -----------------------
-# DATE PARSER
+# DATE NORMALIZATION
 # -----------------------
 
 def normalize_date(date_str):
@@ -25,30 +25,38 @@ def normalize_date(date_str):
 
     try:
 
+        # Remove weekday if present
         date_str = re.sub(
             r"^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+",
             "",
             date_str
         )
 
+        # Convert:
+        # May 3–5,2026 -> May 3,2026
         date_str = re.sub(
             r"–\d{1,2}",
             "",
             date_str
         )
 
-        if "-" in date_str and date_str.count("-")==2:
+        # DD-MMM-YYYY
+        if "-" in date_str and date_str.count("-") == 2:
+
             return datetime.strptime(
                 date_str,
                 "%d-%b-%Y"
             )
 
+        # MM/DD/YYYY
         if "/" in date_str:
+
             return datetime.strptime(
                 date_str,
                 "%m/%d/%Y"
             )
 
+        # Month DD, YYYY
         return datetime.strptime(
             date_str,
             "%B %d, %Y"
@@ -59,33 +67,33 @@ def normalize_date(date_str):
 
 
 # -----------------------
-# GET DATE FROM EVENT PAGE
+# SCRAPE EVENT PAGE
 # -----------------------
 
 def scrape_event_page(event_url):
 
     try:
 
-        r = requests.get(
+        response = requests.get(
             event_url,
             headers=HEADERS,
             timeout=10
         )
 
         soup = BeautifulSoup(
-            r.text,
+            response.text,
             "html.parser"
         )
 
-        page_text = soup.get_text(
+        text = soup.get_text(
             " ",
             strip=True
         )
 
-        page_text = re.sub(
+        text = re.sub(
             r"\s+",
             " ",
-            page_text
+            text
         )
 
         date_pattern = r"""(
@@ -103,37 +111,44 @@ def scrape_event_page(event_url):
 
         match = re.search(
             date_pattern,
-            page_text,
+            text,
             re.VERBOSE
         )
 
-        if match:
-            return normalize_date(
-                match.group(0)
-            )
+        if not match:
+            return None
 
-        return None
+        return normalize_date(
+            match.group(0)
+        )
 
     except:
         return None
 
 
 # -----------------------
-# GET EVENTS FROM SECTION
+# CURRENT EVENTS
 # -----------------------
 
-def extract_events(section, source):
+def extract_current_events(soup):
 
-    events=[]
+    events = []
 
-    links = section.find_all(
+    current_section = soup.find(
+        class_="current-events"
+    )
+
+    if not current_section:
+        return events
+
+    links = current_section.find_all(
         "a",
         href=True
     )
 
     for link in links:
 
-        href=link["href"]
+        href = link["href"]
 
         if (
             "/event/" not in href
@@ -145,15 +160,77 @@ def extract_events(section, source):
         events.append({
 
             "name":
-            link.get_text(strip=True),
+            link.get_text(
+                strip=True
+            ),
 
             "url":
-            BASE_URL+href,
+            BASE_URL + href,
 
             "source":
-            source
+            "Now Playing"
 
         })
+
+    return events
+
+
+# -----------------------
+# UPCOMING EVENTS
+# -----------------------
+
+def extract_upcoming_events(soup):
+
+    events=[]
+
+    for section in soup.find_all(
+        "details"
+    ):
+
+        summary=section.find(
+            "summary"
+        )
+
+        if not summary:
+            continue
+
+        title=summary.get_text(
+            strip=True
+        ).lower()
+
+        if "upcoming" not in title:
+            continue
+
+        links=section.find_all(
+            "a",
+            href=True
+        )
+
+        for link in links:
+
+            href=link["href"]
+
+            if (
+                "/event/" not in href
+                and
+                "/tour/event/" not in href
+            ):
+                continue
+
+            events.append({
+
+                "name":
+                link.get_text(
+                    strip=True
+                ),
+
+                "url":
+                BASE_URL+href,
+
+                "source":
+                "Upcoming"
+
+            })
 
     return events
 
@@ -168,14 +245,14 @@ def get_player_rows(pdga_number):
 
     try:
 
-        r=requests.get(
+        response=requests.get(
             f"{PLAYER_URL}{pdga_number}",
             headers=HEADERS,
             timeout=10
         )
 
         soup=BeautifulSoup(
-            r.text,
+            response.text,
             "html.parser"
         )
 
@@ -189,37 +266,22 @@ def get_player_rows(pdga_number):
 
         all_events=[]
 
-        for section in soup.find_all("details"):
-
-            summary=section.find(
-                "summary"
+        # Pull current events
+        all_events.extend(
+            extract_current_events(
+                soup
             )
+        )
 
-            if not summary:
-                continue
+        # Pull upcoming events
+        all_events.extend(
+            extract_upcoming_events(
+                soup
+            )
+        )
 
-            title=summary.get_text(
-                strip=True
-            ).lower()
-
-            if "now playing" in title:
-
-                all_events.extend(
-                    extract_events(
-                        section,
-                        "Now Playing"
-                    )
-                )
-
-            elif "upcoming" in title:
-
-                all_events.extend(
-                    extract_events(
-                        section,
-                        "Upcoming"
-                    )
-                )
-
+        # Remove duplicates
+        unique=[]
         seen=set()
 
         for event in all_events:
@@ -230,6 +292,13 @@ def get_player_rows(pdga_number):
             seen.add(
                 event["url"]
             )
+
+            unique.append(
+                event
+            )
+
+        # Visit event pages
+        for event in unique:
 
             event_date=scrape_event_page(
                 event["url"]
@@ -259,6 +328,30 @@ def get_player_rows(pdga_number):
 
             time.sleep(.25)
 
+        if not rows:
+
+            rows.append({
+
+                "PDGA":
+                pdga_number,
+
+                "Name":
+                player_name,
+
+                "Source":
+                "",
+
+                "Date":
+                None,
+
+                "Event":
+                "No events found",
+
+                "Event URL":
+                ""
+
+            })
+
         return rows
 
     except Exception as e:
@@ -287,7 +380,7 @@ def get_player_rows(pdga_number):
 
 
 # -----------------------
-# RUN
+# RUN SCRAPER
 # -----------------------
 
 def run_scraper(numbers):
@@ -304,7 +397,7 @@ def run_scraper(numbers):
 
 
 # -----------------------
-# UI
+# STREAMLIT UI
 # -----------------------
 
 st.title(
@@ -312,7 +405,7 @@ st.title(
 )
 
 input_text=st.text_area(
-    "Enter PDGA numbers"
+    "Enter PDGA numbers (comma or newline separated)"
 )
 
 if st.button(
@@ -333,11 +426,15 @@ if st.button(
     ]
 
     with st.spinner(
-        "Scraping..."
+        "Scraping PDGA..."
     ):
 
+        data=run_scraper(
+            numbers
+        )
+
         df=pd.DataFrame(
-            run_scraper(numbers)
+            data
         )
 
     df=df.sort_values(
@@ -346,28 +443,35 @@ if st.button(
         na_position="last"
     )
 
+    # remove time portion
     df["Date"]=pd.to_datetime(
         df["Date"],
         errors="coerce"
     ).dt.date
+
+    st.success(
+        f"{len(df)} rows loaded"
+    )
 
     st.dataframe(
         df,
         use_container_width=True
     )
 
+    filename="pdga_events.xlsx"
+
     df.to_excel(
-        "pdga_events.xlsx",
+        filename,
         index=False
     )
 
     with open(
-        "pdga_events.xlsx",
+        filename,
         "rb"
     ) as f:
 
         st.download_button(
             "📥 Download Excel",
             f,
-            file_name="pdga_events.xlsx"
-        )        
+            file_name=filename
+        )
