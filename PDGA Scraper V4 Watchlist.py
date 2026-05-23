@@ -188,13 +188,13 @@ def run_scraper(numbers):
 # =========================================================
 # STREAMLIT UI
 # =========================================================
-st.title("🥏 PDGA Tracker (Cached + Export Ready)")
+st.title("🥏 PDGA Tracker V5")
 
 
 # =========================================================
 # WATCHLIST SECTION
 # =========================================================
-st.subheader("📌 Watchlist (Fixed)")
+st.subheader("📌 Watchlist (USDG Roster)")
 
 if st.button("Run Watchlist Scrape"):
 
