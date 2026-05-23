@@ -9,30 +9,56 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 BASE_URL = "https://www.pdga.com"
 PLAYER_URL = "https://www.pdga.com/player/"
 
+HEADERS = {
+    "User-Agent": "Mozilla/5.0"
+}
+
+# Reuse connections (major speed improvement)
 session = requests.Session()
-session.headers.update({"User-Agent": "Mozilla/5.0"})
+session.headers.update(HEADERS)
 
 
 # -----------------------
-# PARSE DATE STRINGS
+# DATE NORMALIZATION
 # -----------------------
-def parse_date(raw):
 
-    if not raw:
+def normalize_date(date_str):
+
+    if not date_str:
         return None
 
     try:
 
-        raw = re.sub(r"^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+", "", raw)
-        raw = re.sub(r"–\d{1,2}", "", raw)
+        date_str = re.sub(
+            r"^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+",
+            "",
+            date_str
+        )
 
-        if "-" in raw and raw.count("-") == 2:
-            return datetime.strptime(raw, "%d-%b-%Y")
+        date_str = re.sub(
+            r"–\d{1,2}",
+            "",
+            date_str
+        )
 
-        if "/" in raw:
-            return datetime.strptime(raw, "%m/%d/%Y")
+        if "-" in date_str and date_str.count("-")==2:
 
-        return datetime.strptime(raw, "%B %d, %Y")
+            return datetime.strptime(
+                date_str,
+                "%d-%b-%Y"
+            )
+
+        if "/" in date_str:
+
+            return datetime.strptime(
+                date_str,
+                "%m/%d/%Y"
+            )
+
+        return datetime.strptime(
+            date_str,
+            "%B %d, %Y"
+        )
 
     except:
         return None
@@ -40,22 +66,35 @@ def parse_date(raw):
 
 # -----------------------
 # SCRAPE EVENT PAGE
-# (returns START + END)
 # -----------------------
-def scrape_event_page(url):
+
+def scrape_event_page(event_url):
 
     try:
 
-        r = session.get(url, timeout=10)
-        soup = BeautifulSoup(r.text, "html.parser")
+        response = session.get(
+            event_url,
+            timeout=10
+        )
 
-        text = soup.get_text(" ", strip=True)
-        text = re.sub(r"\s+", " ", text)
+        soup = BeautifulSoup(
+            response.text,
+            "html.parser"
+        )
+
+        text = soup.get_text(
+            " ",
+            strip=True
+        )
+
+        text = re.sub(
+            r"\s+",
+            " ",
+            text
+        )
 
         date_pattern = r"""(
-            (Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+
-            (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{1,2}(?:–\d{1,2})?,\s\d{4}
-            |
+            ((Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+)?
             (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{1,2}(?:–\d{1,2})?,\s\d{4}
             |
             \d{1,2}-[A-Za-z]{3}-\d{4}
@@ -63,50 +102,65 @@ def scrape_event_page(url):
             \d{1,2}/\d{1,2}/\d{4}
         )"""
 
-        matches = re.findall(date_pattern, text, re.VERBOSE)
+        match = re.search(
+            date_pattern,
+            text,
+            re.VERBOSE
+        )
 
-        dates = []
+        if not match:
+            return None
 
-        for m in matches:
-
-            raw = m[0] if isinstance(m, tuple) else m
-            dt = parse_date(raw)
-
-            if dt:
-                dates.append(dt)
-
-        if not dates:
-            return None, None
-
-        return min(dates), max(dates)
+        return normalize_date(
+            match.group(0)
+        )
 
     except:
-        return None, None
+        return None
 
 
 # -----------------------
 # CURRENT EVENTS
 # -----------------------
+
 def extract_current_events(soup):
 
-    events = []
+    events=[]
 
-    section = soup.find(class_="current-events")
+    current_section=soup.find(
+        class_="current-events"
+    )
 
-    if not section:
+    if not current_section:
         return events
 
-    for a in section.find_all("a", href=True):
+    links=current_section.find_all(
+        "a",
+        href=True
+    )
 
-        href = a["href"]
+    for link in links:
 
-        if "/event/" not in href and "/tour/event/" not in href:
+        href=link["href"]
+
+        if (
+            "/event/" not in href
+            and
+            "/tour/event/" not in href
+        ):
             continue
 
         events.append({
-            "name": a.get_text(strip=True),
-            "url": BASE_URL + href,
-            "source": "Now Playing"
+
+            "name":
+            link.get_text(strip=True),
+
+            "url":
+            BASE_URL+href,
+
+            "source":
+            "Now Playing"
+
         })
 
     return events
@@ -115,45 +169,66 @@ def extract_current_events(soup):
 # -----------------------
 # UPCOMING EVENTS
 # -----------------------
+
 def extract_upcoming_events(soup):
 
-    events = []
+    events=[]
 
-    for d in soup.find_all("details"):
+    for section in soup.find_all("details"):
 
-        summary = d.find("summary")
+        summary=section.find("summary")
 
         if not summary:
             continue
 
-        if "upcoming" not in summary.get_text(strip=True).lower():
+        title=summary.get_text(
+            strip=True
+        ).lower()
+
+        if "upcoming" not in title:
             continue
 
-        for a in d.find_all("a", href=True):
+        links=section.find_all(
+            "a",
+            href=True
+        )
 
-            href = a["href"]
+        for link in links:
 
-            if "/event/" not in href and "/tour/event/" not in href:
+            href=link["href"]
+
+            if (
+                "/event/" not in href
+                and
+                "/tour/event/" not in href
+            ):
                 continue
 
             events.append({
-                "name": a.get_text(strip=True),
-                "url": BASE_URL + href,
-                "source": "Upcoming"
+
+                "name":
+                link.get_text(strip=True),
+
+                "url":
+                BASE_URL+href,
+
+                "source":
+                "Upcoming"
+
             })
 
     return events
 
 
 # -----------------------
-# PROCESS EVENT (PARALLEL)
+# GET SINGLE EVENT DATE
 # -----------------------
+
 def process_event(event):
 
-    start, end = scrape_event_page(event["url"])
-
-    event["Start Date"] = start
-    event["End Date"] = end
+    event["Date"] = scrape_event_page(
+        event["url"]
+    )
 
     return event
 
@@ -161,48 +236,104 @@ def process_event(event):
 # -----------------------
 # PLAYER SCRAPER
 # -----------------------
+
 def get_player_rows(pdga_number):
 
-    rows = []
+    rows=[]
 
     try:
 
-        r = session.get(f"{PLAYER_URL}{pdga_number}", timeout=10)
-        soup = BeautifulSoup(r.text, "html.parser")
+        response=session.get(
+            f"{PLAYER_URL}{pdga_number}",
+            timeout=10
+        )
 
-        name_tag = soup.find("h1")
-        name = name_tag.text.strip() if name_tag else "Unknown"
+        soup=BeautifulSoup(
+            response.text,
+            "html.parser"
+        )
 
-        all_events = []
-        all_events += extract_current_events(soup)
-        all_events += extract_upcoming_events(soup)
+        name_tag=soup.find("h1")
 
-        # dedupe
-        seen = set()
-        unique = []
+        player_name=(
+            name_tag.text.strip()
+            if name_tag
+            else "Unknown"
+        )
 
-        for e in all_events:
-            if e["url"] not in seen:
-                seen.add(e["url"])
-                unique.append(e)
+        all_events=[]
 
-        # parallel event scraping
-        with ThreadPoolExecutor(max_workers=10) as ex:
+        all_events.extend(
+            extract_current_events(
+                soup
+            )
+        )
 
-            futures = [ex.submit(process_event, e) for e in unique]
+        all_events.extend(
+            extract_upcoming_events(
+                soup
+            )
+        )
 
-            for f in as_completed(futures):
+        # Remove duplicates
+        seen=set()
 
-                e = f.result()
+        unique=[]
+
+        for event in all_events:
+
+            if event["url"] in seen:
+                continue
+
+            seen.add(
+                event["url"]
+            )
+
+            unique.append(
+                event
+            )
+
+        # PARALLEL EVENT PAGE SCRAPING
+        with ThreadPoolExecutor(
+            max_workers=10
+        ) as executor:
+
+            futures=[
+
+                executor.submit(
+                    process_event,
+                    e
+                )
+
+                for e in unique
+            ]
+
+            for future in as_completed(
+                futures
+            ):
+
+                event=future.result()
 
                 rows.append({
-                    "PDGA": pdga_number,
-                    "Name": name,
-                    "Source": e["source"],
-                    "Event": e["name"],
-                    "Event URL": e["url"],
-                    "Start Date": e["Start Date"],
-                    "End Date": e["End Date"]
+
+                    "PDGA":
+                    pdga_number,
+
+                    "Name":
+                    player_name,
+
+                    "Source":
+                    event["source"],
+
+                    "Date":
+                    event["Date"],
+
+                    "Event":
+                    event["name"],
+
+                    "Event URL":
+                    event["url"]
+
                 })
 
         return rows
@@ -210,29 +341,47 @@ def get_player_rows(pdga_number):
     except Exception as e:
 
         return [{
-            "PDGA": pdga_number,
-            "Name": "Error",
-            "Source": "",
-            "Event": str(e),
-            "Event URL": "",
-            "Start Date": None,
-            "End Date": None
+
+            "PDGA":
+            pdga_number,
+            "Name":"Error",
+            "Source":"",
+            "Date":None,
+            "Event":str(e),
+            "Event URL":""
+
         }]
 
 
 # -----------------------
-# RUN ALL PLAYERS (PARALLEL)
+# RUN ALL PLAYERS IN PARALLEL
 # -----------------------
+
 def run_scraper(numbers):
 
-    all_rows = []
+    all_rows=[]
 
-    with ThreadPoolExecutor(max_workers=8) as ex:
+    with ThreadPoolExecutor(
+        max_workers=8
+    ) as executor:
 
-        futures = [ex.submit(get_player_rows, n) for n in numbers]
+        futures=[
 
-        for f in as_completed(futures):
-            all_rows += f.result()
+            executor.submit(
+                get_player_rows,
+                n
+            )
+
+            for n in numbers
+        ]
+
+        for future in as_completed(
+            futures
+        ):
+
+            all_rows.extend(
+                future.result()
+            )
 
     return all_rows
 
@@ -240,38 +389,74 @@ def run_scraper(numbers):
 # -----------------------
 # UI
 # -----------------------
-st.title("🥏 PDGA Event Tracker (Parallel + Date Range)")
 
-input_text = st.text_area("Enter PDGA numbers")
+st.title(
+    "🥏 PDGA Event Tracker"
+)
 
-if st.button("Fetch Events"):
+input_text=st.text_area(
+    "Enter PDGA numbers"
+)
 
-    numbers = [
+if st.button(
+    "Fetch Events"
+):
+
+    numbers=[
+
         int(x.strip())
-        for x in input_text.replace(",", "\n").split()
+
+        for x in
+        input_text
+        .replace(",", "\n")
+        .split()
+
         if x.strip().isdigit()
+
     ]
 
-    with st.spinner("Scraping..."):
+    with st.spinner(
+        "Scraping..."
+    ):
 
-        df = pd.DataFrame(run_scraper(numbers))
+        df=pd.DataFrame(
+            run_scraper(numbers)
+        )
 
-    # format dates
-    df["Start Date"] = pd.to_datetime(df["Start Date"], errors="coerce").dt.date
-    df["End Date"] = pd.to_datetime(df["End Date"], errors="coerce").dt.date
+    df=df.sort_values(
+        by="Date",
+        ascending=True,
+        na_position="last"
+    )
 
-    # sort by start date
-    df = df.sort_values(by="Start Date", na_position="last")
+    df["Date"]=pd.to_datetime(
+        df["Date"],
+        errors="coerce"
+    ).dt.date
 
-    st.success(f"{len(df)} rows loaded")
+    st.success(
+        f"{len(df)} rows loaded"
+    )
 
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(
+        df,
+        use_container_width=True
+    )
 
-    df.to_excel("pdga_events.xlsx", index=False)
+    filename="pdga_events.xlsx"
 
-    with open("pdga_events.xlsx", "rb") as f:
+    df.to_excel(
+        filename,
+        index=False
+    )
+
+    with open(
+        filename,
+        "rb"
+    ) as f:
+
         st.download_button(
             "📥 Download Excel",
             f,
-            file_name="pdga_events.xlsx"
+            file_name=filename
         )
