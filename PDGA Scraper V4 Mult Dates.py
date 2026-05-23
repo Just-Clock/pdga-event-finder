@@ -14,7 +14,7 @@ session.headers.update({"User-Agent": "Mozilla/5.0"})
 
 
 # -----------------------
-# DATE PARSER (SINGLE DATE ONLY)
+# DATE PARSER
 # -----------------------
 def parse_date(raw):
 
@@ -22,7 +22,6 @@ def parse_date(raw):
         return None
 
     try:
-
         raw = re.sub(r"^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+", "", raw)
         raw = re.sub(r"–\d{1,2}", "", raw)
 
@@ -39,7 +38,7 @@ def parse_date(raw):
 
 
 # -----------------------
-# EVENT PAGE SCRAPER (SINGLE BEST DATE)
+# EVENT SCRAPER
 # -----------------------
 def scrape_event_page(url):
 
@@ -72,68 +71,7 @@ def scrape_event_page(url):
 
 
 # -----------------------
-# CURRENT EVENTS
-# -----------------------
-def extract_current_events(soup):
-
-    events = []
-
-    section = soup.find(class_="current-events")
-
-    if not section:
-        return events
-
-    for a in section.find_all("a", href=True):
-
-        href = a["href"]
-
-        if "/event/" not in href and "/tour/event/" not in href:
-            continue
-
-        events.append({
-            "name": a.get_text(strip=True),
-            "url": BASE_URL + href,
-            "source": "Now Playing"
-        })
-
-    return events
-
-
-# -----------------------
-# UPCOMING EVENTS
-# -----------------------
-def extract_upcoming_events(soup):
-
-    events = []
-
-    for d in soup.find_all("details"):
-
-        summary = d.find("summary")
-
-        if not summary:
-            continue
-
-        if "upcoming" not in summary.get_text(strip=True).lower():
-            continue
-
-        for a in d.find_all("a", href=True):
-
-            href = a["href"]
-
-            if "/event/" not in href and "/tour/event/" not in href:
-                continue
-
-            events.append({
-                "name": a.get_text(strip=True),
-                "url": BASE_URL + href,
-                "source": "Upcoming"
-            })
-
-    return events
-
-
-# -----------------------
-# PLAYER SCRAPER
+# PLAYER PAGE SCRAPER
 # -----------------------
 def get_player_rows(pdga_number):
 
@@ -146,9 +84,32 @@ def get_player_rows(pdga_number):
         name = name_tag.text.strip() if name_tag else "Unknown"
 
         events = []
-        events += extract_current_events(soup)
-        events += extract_upcoming_events(soup)
 
+        # now playing
+        current = soup.find(class_="current-events")
+        if current:
+            for a in current.find_all("a", href=True):
+                if "/event/" in a["href"] or "/tour/event/" in a["href"]:
+                    events.append({
+                        "name": a.get_text(strip=True),
+                        "url": BASE_URL + a["href"],
+                        "source": "Now Playing"
+                    })
+
+        # upcoming
+        for d in soup.find_all("details"):
+            summary = d.find("summary")
+            if summary and "upcoming" in summary.get_text(strip=True).lower():
+
+                for a in d.find_all("a", href=True):
+                    if "/event/" in a["href"] or "/tour/event/" in a["href"]:
+                        events.append({
+                            "name": a.get_text(strip=True),
+                            "url": BASE_URL + a["href"],
+                            "source": "Upcoming"
+                        })
+
+        # dedupe
         seen = set()
         unique = []
 
@@ -160,7 +121,10 @@ def get_player_rows(pdga_number):
         rows = []
 
         with ThreadPoolExecutor(max_workers=10) as ex:
-            futures = [ex.submit(lambda e: (e, scrape_event_page(e["url"])), e) for e in unique]
+            futures = [
+                ex.submit(lambda e: (e, scrape_event_page(e["url"])), e)
+                for e in unique
+            ]
 
             for f in as_completed(futures):
 
@@ -190,14 +154,14 @@ def get_player_rows(pdga_number):
 
 
 # -----------------------
-# RUN SCRAPER
+# SCRAPER WRAPPER (PURE)
 # -----------------------
-def run_scraper(numbers):
+def run_scraper(pdga_list):
 
     all_rows = []
 
     with ThreadPoolExecutor(max_workers=8) as ex:
-        futures = [ex.submit(get_player_rows, n) for n in numbers]
+        futures = [ex.submit(get_player_rows, n) for n in pdga_list]
 
         for f in as_completed(futures):
             all_rows += f.result()
@@ -206,29 +170,34 @@ def run_scraper(numbers):
 
 
 # -----------------------
-# STREAMLIT UI + WATCHLIST
+# STREAMLIT UI (WATCHLIST SEPARATED)
 # -----------------------
 st.title("🥏 PDGA Event Tracker")
 
-# initialize watchlist
+# init watchlist ONLY
 if "watchlist" not in st.session_state:
     st.session_state.watchlist = []
 
 
-# add player
+# -----------------------
+# ADD TO WATCHLIST
+# -----------------------
 col1, col2 = st.columns([3, 1])
 
 with col1:
-    new_pdga = st.text_input("Add PDGA number")
+    pdga_input = st.text_input("Add PDGA number")
 
 with col2:
     if st.button("Add"):
-        if new_pdga.isdigit():
-            if int(new_pdga) not in st.session_state.watchlist:
-                st.session_state.watchlist.append(int(new_pdga))
+        if pdga_input.isdigit():
+            n = int(pdga_input)
+            if n not in st.session_state.watchlist:
+                st.session_state.watchlist.append(n)
 
 
-# show watchlist
+# -----------------------
+# SHOW WATCHLIST (NO SCRAPING HERE)
+# -----------------------
 st.subheader("Watchlist")
 
 for n in st.session_state.watchlist:
@@ -236,12 +205,19 @@ for n in st.session_state.watchlist:
 
     colA.write(str(n))
 
-    if colB.button("Remove", key=str(n)):
+    if colB.button("Remove", key=f"rm_{n}"):
         st.session_state.watchlist.remove(n)
+        st.rerun()
 
 
-# run scrape
+# -----------------------
+# RUN SCRAPER ONLY ON DEMAND
+# -----------------------
 if st.button("Fetch Events"):
+
+    if not st.session_state.watchlist:
+        st.warning("Add PDGA numbers first")
+        st.stop()
 
     with st.spinner("Scraping PDGA..."):
 
@@ -252,14 +228,7 @@ if st.button("Fetch Events"):
     df = df.sort_values(by="Date", na_position="last")
 
     df = df[
-        [
-            "PDGA",
-            "Name",
-            "Source",
-            "Date",
-            "Event",
-            "Event URL"
-        ]
+        ["PDGA", "Name", "Source", "Date", "Event", "Event URL"]
     ]
 
     st.success(f"{len(df)} rows loaded")
@@ -269,4 +238,8 @@ if st.button("Fetch Events"):
     df.to_excel("pdga_events.xlsx", index=False)
 
     with open("pdga_events.xlsx", "rb") as f:
-        st.download_button("📥 Download Excel", f, file_name="pdga_events.xlsx")
+        st.download_button(
+            "📥 Download Excel",
+            f,
+            file_name="pdga_events.xlsx"
+        )
