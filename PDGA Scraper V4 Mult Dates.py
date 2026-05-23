@@ -50,24 +50,107 @@ def scrape_event_page(url):
 
         dates = []
 
-        # -----------------------------
-        # CASE 1: label/value pairs
-        # -----------------------------
+        # =========================================================
+        # 1) JSON-LD (MOST RELIABLE SOURCE)
+        # =========================================================
+        scripts = soup.find_all("script", type="application/ld+json")
 
+        for s in scripts:
+
+            try:
+                data = json.loads(s.string)
+
+                # JSON-LD can be dict or list
+                if isinstance(data, list):
+                    data = data[0]
+
+                if isinstance(data, dict):
+
+                    # common schema fields
+                    possible_keys = [
+                        "startDate",
+                        "endDate",
+                        "date",
+                        "eventDate"
+                    ]
+
+                    for k in possible_keys:
+
+                        if k in data and data[k]:
+
+                            # ISO format handling
+                            try:
+                                dt = datetime.fromisoformat(
+                                    data[k].replace("Z", "")
+                                )
+                                dates.append(dt)
+                            except:
+                                pass
+
+            except:
+                continue
+
+
+        # =========================================================
+        # 2) FIELD-BASED STRUCTURE (Drupal style)
+        # =========================================================
+        field_blocks = soup.find_all(
+            class_=re.compile(r"field|event", re.I)
+        )
+
+        for block in field_blocks:
+
+            text = block.get_text(" ", strip=True)
+
+            found = re.findall(
+                r"""
+                (?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)?\s*
+                (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{1,2}(?:–\d{1,2})?,\s\d{4}
+                |
+                \d{1,2}-[A-Za-z]{3}-\d{4}
+                |
+                \d{1,2}/\d{1,2}/\d{4}
+                """,
+                text,
+                re.VERBOSE
+            )
+
+            for f in found:
+                try:
+
+                    f = re.sub(r"–\d{1,2}", "", f)
+
+                    if "-" in f and f.count("-") == 2:
+                        dt = datetime.strptime(f, "%d-%b-%Y")
+
+                    elif "/" in f:
+                        dt = datetime.strptime(f, "%m/%d/%Y")
+
+                    else:
+                        dt = datetime.strptime(f, "%B %d, %Y")
+
+                    dates.append(dt)
+
+                except:
+                    continue
+
+
+        # =========================================================
+        # 3) LABEL / VALUE PAIRS (Date → next node)
+        # =========================================================
         labels = soup.find_all(string=re.compile("^Date$", re.I))
 
         for label in labels:
 
             parent = label.parent
-
             if not parent:
                 continue
 
-            # try next sibling first
-            next_node = parent.find_next()
+            nxt = parent.find_next()
 
-            if next_node:
-                text = next_node.get_text(" ", strip=True)
+            if nxt:
+
+                text = nxt.get_text(" ", strip=True)
 
                 found = re.findall(
                     r"""
@@ -84,9 +167,9 @@ def scrape_event_page(url):
 
                 for f in found:
 
-                    f = re.sub(r"–\d{1,2}", "", f)
-
                     try:
+
+                        f = re.sub(r"–\d{1,2}", "", f)
 
                         if "-" in f and f.count("-") == 2:
                             dt = datetime.strptime(f, "%d-%b-%Y")
@@ -102,31 +185,10 @@ def scrape_event_page(url):
                     except:
                         continue
 
-        # -----------------------------
-        # CASE 2: fallback (header)
-        # -----------------------------
 
-        if not dates:
-
-            h1 = soup.find("h1")
-
-            if h1:
-                found = re.findall(
-                    r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{1,2}(?:–\d{1,2})?,\s\d{4}",
-                    h1.get_text(" ", strip=True)
-                )
-
-                for f in found:
-
-                    try:
-                        dt = datetime.strptime(
-                            re.sub(r"–\d{1,2}", "", f),
-                            "%B %d, %Y"
-                        )
-                        dates.append(dt)
-                    except:
-                        continue
-
+        # =========================================================
+        # FINAL CLEANUP
+        # =========================================================
         if not dates:
             return None, None
 
