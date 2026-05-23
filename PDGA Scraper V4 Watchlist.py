@@ -5,6 +5,8 @@ import pandas as pd
 import re
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import lru_cache
+import io
 
 BASE_URL = "https://www.pdga.com"
 PLAYER_URL = "https://www.pdga.com/player/"
@@ -14,7 +16,7 @@ session.headers.update({"User-Agent": "Mozilla/5.0"})
 
 
 # =========================================================
-# FIXED WATCHLIST (YOUR LIST)
+# FIXED WATCHLIST
 # =========================================================
 WATCHLIST = [
 83596,231663,126098,299223,197269,220870,180280,207096,72628,294797,
@@ -75,13 +77,19 @@ def scrape_event_page(url):
 
         match = re.search(pattern, text, re.VERBOSE)
 
-        if not match:
-            return None
-
-        return parse_date(match.group(0))
+        return parse_date(match.group(0)) if match else None
 
     except:
         return None
+
+
+# =========================================================
+# 🔥 CACHED PLAYER PAGE (MAJOR SPEED BOOST)
+# =========================================================
+@lru_cache(maxsize=256)
+def get_player_page(pdga_number):
+
+    return session.get(f"{PLAYER_URL}{pdga_number}", timeout=10).text
 
 
 # =========================================================
@@ -91,8 +99,8 @@ def get_player_rows(pdga_number):
 
     try:
 
-        r = session.get(f"{PLAYER_URL}{pdga_number}", timeout=10)
-        soup = BeautifulSoup(r.text, "html.parser")
+        html = get_player_page(pdga_number)
+        soup = BeautifulSoup(html, "html.parser")
 
         name_tag = soup.find("h1")
         name = name_tag.text.strip() if name_tag else "Unknown"
@@ -180,12 +188,13 @@ def run_scraper(numbers):
 # =========================================================
 # STREAMLIT UI
 # =========================================================
-st.title("🥏 PDGA Tracker")
+st.title("🥏 PDGA Tracker (Cached + Export Ready)")
 
-# -------------------------
-# FIXED WATCHLIST SECTION
-# -------------------------
-st.subheader("📌 Watchlist (Fixed Roster)")
+
+# =========================================================
+# WATCHLIST SECTION
+# =========================================================
+st.subheader("📌 Watchlist (Fixed)")
 
 if st.button("Run Watchlist Scrape"):
 
@@ -201,17 +210,41 @@ if st.button("Run Watchlist Scrape"):
         ["PDGA", "Name", "Source", "Date", "Event", "Event URL"]
     ]
 
-    st.success(f"{len(df_watch)} watchlist rows loaded")
-
     st.dataframe(df_watch, use_container_width=True)
 
 
-# -------------------------
-# MANUAL SCRAPE TOOL (SEPARATE)
-# -------------------------
-st.subheader("🔎 Manual PDGA Lookup")
+    # -------------------------
+    # EXCEL EXPORT (WATCHLIST)
+    # -------------------------
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df_watch.to_excel(writer, index=False, sheet_name="Watchlist")
 
-manual_input = st.text_area("Enter PDGA numbers (comma or newline separated)")
+    st.download_button(
+        "📥 Download Watchlist Excel",
+        data=output.getvalue(),
+        file_name="pdga_watchlist.xlsx"
+    )
+
+
+    # -------------------------
+    # CSV EXPORT (WATCHLIST ONLY)
+    # -------------------------
+    csv = df_watch.to_csv(index=False).encode("utf-8")
+
+    st.download_button(
+        "📄 Download Watchlist CSV",
+        data=csv,
+        file_name="pdga_watchlist.csv"
+    )
+
+
+# =========================================================
+# MANUAL SCRAPE SECTION
+# =========================================================
+st.subheader("🔎 Manual Lookup")
+
+manual_input = st.text_area("Enter PDGA numbers")
 
 if st.button("Run Manual Scrape"):
 
@@ -223,7 +256,7 @@ if st.button("Run Manual Scrape"):
 
     if numbers:
 
-        with st.spinner("Scraping manual input..."):
+        with st.spinner("Scraping..."):
 
             df_manual = pd.DataFrame(run_scraper(numbers))
 
@@ -235,9 +268,21 @@ if st.button("Run Manual Scrape"):
             ["PDGA", "Name", "Source", "Date", "Event", "Event URL"]
         ]
 
-        st.success(f"{len(df_manual)} manual rows loaded")
-
         st.dataframe(df_manual, use_container_width=True)
 
+
+        # -------------------------
+        # EXCEL EXPORT (MANUAL)
+        # -------------------------
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df_manual.to_excel(writer, index=False, sheet_name="Manual")
+
+        st.download_button(
+            "📥 Download Manual Excel",
+            data=output.getvalue(),
+            file_name="pdga_manual.xlsx"
+        )
+
     else:
-        st.warning("No valid PDGA numbers entered")
+        st.warning("Enter valid PDGA numbers")
