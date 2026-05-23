@@ -14,7 +14,7 @@ session.headers.update({"User-Agent": "Mozilla/5.0"})
 
 
 # -----------------------
-# DATE PARSER
+# DATE PARSER (SINGLE DATE ONLY)
 # -----------------------
 def parse_date(raw):
 
@@ -39,7 +39,7 @@ def parse_date(raw):
 
 
 # -----------------------
-# SCRAPE EVENT PAGE (HEADER ONLY)
+# EVENT PAGE SCRAPER (SINGLE BEST DATE)
 # -----------------------
 def scrape_event_page(url):
 
@@ -48,154 +48,27 @@ def scrape_event_page(url):
         r = session.get(url, timeout=10)
         soup = BeautifulSoup(r.text, "html.parser")
 
-        dates = []
+        text = soup.get_text(" ", strip=True)
+        text = re.sub(r"\s+", " ", text)
 
-        # =========================================================
-        # 1) JSON-LD (MOST RELIABLE SOURCE)
-        # =========================================================
-        scripts = soup.find_all("script", type="application/ld+json")
+        pattern = r"""
+            (?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)?\s*
+            (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{1,2}(?:–\d{1,2})?,\s\d{4}
+            |
+            \d{1,2}-[A-Za-z]{3}-\d{4}
+            |
+            \d{1,2}/\d{1,2}/\d{4}
+        """
 
-        for s in scripts:
+        match = re.search(pattern, text, re.VERBOSE)
 
-            try:
-                data = json.loads(s.string)
+        if not match:
+            return None
 
-                # JSON-LD can be dict or list
-                if isinstance(data, list):
-                    data = data[0]
-
-                if isinstance(data, dict):
-
-                    # common schema fields
-                    possible_keys = [
-                        "startDate",
-                        "endDate",
-                        "date",
-                        "eventDate"
-                    ]
-
-                    for k in possible_keys:
-
-                        if k in data and data[k]:
-
-                            # ISO format handling
-                            try:
-                                dt = datetime.fromisoformat(
-                                    data[k].replace("Z", "")
-                                )
-                                dates.append(dt)
-                            except:
-                                pass
-
-            except:
-                continue
-
-
-        # =========================================================
-        # 2) FIELD-BASED STRUCTURE (Drupal style)
-        # =========================================================
-        field_blocks = soup.find_all(
-            class_=re.compile(r"field|event", re.I)
-        )
-
-        for block in field_blocks:
-
-            text = block.get_text(" ", strip=True)
-
-            found = re.findall(
-                r"""
-                (?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)?\s*
-                (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{1,2}(?:–\d{1,2})?,\s\d{4}
-                |
-                \d{1,2}-[A-Za-z]{3}-\d{4}
-                |
-                \d{1,2}/\d{1,2}/\d{4}
-                """,
-                text,
-                re.VERBOSE
-            )
-
-            for f in found:
-                try:
-
-                    f = re.sub(r"–\d{1,2}", "", f)
-
-                    if "-" in f and f.count("-") == 2:
-                        dt = datetime.strptime(f, "%d-%b-%Y")
-
-                    elif "/" in f:
-                        dt = datetime.strptime(f, "%m/%d/%Y")
-
-                    else:
-                        dt = datetime.strptime(f, "%B %d, %Y")
-
-                    dates.append(dt)
-
-                except:
-                    continue
-
-
-        # =========================================================
-        # 3) LABEL / VALUE PAIRS (Date → next node)
-        # =========================================================
-        labels = soup.find_all(string=re.compile("^Date$", re.I))
-
-        for label in labels:
-
-            parent = label.parent
-            if not parent:
-                continue
-
-            nxt = parent.find_next()
-
-            if nxt:
-
-                text = nxt.get_text(" ", strip=True)
-
-                found = re.findall(
-                    r"""
-                    (?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)?\s*
-                    (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{1,2}(?:–\d{1,2})?,\s\d{4}
-                    |
-                    \d{1,2}-[A-Za-z]{3}-\d{4}
-                    |
-                    \d{1,2}/\d{1,2}/\d{4}
-                    """,
-                    text,
-                    re.VERBOSE
-                )
-
-                for f in found:
-
-                    try:
-
-                        f = re.sub(r"–\d{1,2}", "", f)
-
-                        if "-" in f and f.count("-") == 2:
-                            dt = datetime.strptime(f, "%d-%b-%Y")
-
-                        elif "/" in f:
-                            dt = datetime.strptime(f, "%m/%d/%Y")
-
-                        else:
-                            dt = datetime.strptime(f, "%B %d, %Y")
-
-                        dates.append(dt)
-
-                    except:
-                        continue
-
-
-        # =========================================================
-        # FINAL CLEANUP
-        # =========================================================
-        if not dates:
-            return None, None
-
-        return min(dates), max(dates)
+        return parse_date(match.group(0))
 
     except:
-        return None, None
+        return None
 
 
 # -----------------------
@@ -260,24 +133,9 @@ def extract_upcoming_events(soup):
 
 
 # -----------------------
-# PROCESS EVENT (PARALLEL)
-# -----------------------
-def process_event(event):
-
-    start, end = scrape_event_page(event["url"])
-
-    event["Start Date"] = start
-    event["End Date"] = end
-
-    return event
-
-
-# -----------------------
 # PLAYER SCRAPER
 # -----------------------
 def get_player_rows(pdga_number):
-
-    rows = []
 
     try:
 
@@ -291,7 +149,6 @@ def get_player_rows(pdga_number):
         events += extract_current_events(soup)
         events += extract_upcoming_events(soup)
 
-        # dedupe
         seen = set()
         unique = []
 
@@ -300,21 +157,22 @@ def get_player_rows(pdga_number):
                 seen.add(e["url"])
                 unique.append(e)
 
-        # parallel event scraping
+        rows = []
+
         with ThreadPoolExecutor(max_workers=10) as ex:
-            futures = [ex.submit(process_event, e) for e in unique]
+            futures = [ex.submit(lambda e: (e, scrape_event_page(e["url"])), e) for e in unique]
 
             for f in as_completed(futures):
-                e = f.result()
+
+                event, date = f.result()
 
                 rows.append({
                     "PDGA": pdga_number,
                     "Name": name,
-                    "Source": e["source"],
-                    "Start Date": e["Start Date"],
-                    "End Date": e["End Date"],
-                    "Event": e["name"],
-                    "Event URL": e["url"]
+                    "Source": event["source"],
+                    "Date": date,
+                    "Event": event["name"],
+                    "Event URL": event["url"]
                 })
 
         return rows
@@ -325,22 +183,20 @@ def get_player_rows(pdga_number):
             "PDGA": pdga_number,
             "Name": "Error",
             "Source": "",
-            "Start Date": None,
-            "End Date": None,
+            "Date": None,
             "Event": str(e),
             "Event URL": ""
         }]
 
 
 # -----------------------
-# RUN SCRAPER (PARALLEL PLAYERS)
+# RUN SCRAPER
 # -----------------------
 def run_scraper(numbers):
 
     all_rows = []
 
     with ThreadPoolExecutor(max_workers=8) as ex:
-
         futures = [ex.submit(get_player_rows, n) for n in numbers]
 
         for f in as_completed(futures):
@@ -350,42 +206,61 @@ def run_scraper(numbers):
 
 
 # -----------------------
-# STREAMLIT UI
+# STREAMLIT UI + WATCHLIST
 # -----------------------
-st.title("🥏 PDGA Event Tracker (Clean + Fast + Accurate)")
+st.title("🥏 PDGA Event Tracker")
 
-input_text = st.text_area("Enter PDGA numbers")
+# initialize watchlist
+if "watchlist" not in st.session_state:
+    st.session_state.watchlist = []
 
+
+# add player
+col1, col2 = st.columns([3, 1])
+
+with col1:
+    new_pdga = st.text_input("Add PDGA number")
+
+with col2:
+    if st.button("Add"):
+        if new_pdga.isdigit():
+            if int(new_pdga) not in st.session_state.watchlist:
+                st.session_state.watchlist.append(int(new_pdga))
+
+
+# show watchlist
+st.subheader("Watchlist")
+
+for n in st.session_state.watchlist:
+    colA, colB = st.columns([4, 1])
+
+    colA.write(str(n))
+
+    if colB.button("Remove", key=str(n)):
+        st.session_state.watchlist.remove(n)
+
+
+# run scrape
 if st.button("Fetch Events"):
 
-    numbers = [
-        int(x.strip())
-        for x in input_text.replace(",", "\n").split()
-        if x.strip().isdigit()
-    ]
+    with st.spinner("Scraping PDGA..."):
 
-    with st.spinner("Scraping..."):
+        df = pd.DataFrame(run_scraper(st.session_state.watchlist))
 
-        df = pd.DataFrame(run_scraper(numbers))
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.date
 
-    # date formatting
-    df["Start Date"] = pd.to_datetime(df["Start Date"], errors="coerce").dt.date
-    df["End Date"] = pd.to_datetime(df["End Date"], errors="coerce").dt.date
+    df = df.sort_values(by="Date", na_position="last")
 
-    # COLUMN ORDER (important)
     df = df[
         [
             "PDGA",
             "Name",
             "Source",
-            "Start Date",
-            "End Date",
+            "Date",
             "Event",
             "Event URL"
         ]
     ]
-
-    df = df.sort_values(by="Start Date", na_position="last")
 
     st.success(f"{len(df)} rows loaded")
 
@@ -394,8 +269,4 @@ if st.button("Fetch Events"):
     df.to_excel("pdga_events.xlsx", index=False)
 
     with open("pdga_events.xlsx", "rb") as f:
-        st.download_button(
-            "📥 Download Excel",
-            f,
-            file_name="pdga_events.xlsx"
-        )
+        st.download_button("📥 Download Excel", f, file_name="pdga_events.xlsx")
