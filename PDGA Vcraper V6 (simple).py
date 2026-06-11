@@ -29,7 +29,7 @@ BASE_URL = "https://www.pdga.com/player/"
 # CACHED PLAYER PAGE FETCH
 # =========================================================
 
-@st.cache_data(ttl=3600)
+
 def fetch_player_page(pdga_number):
 
     url = f"{BASE_URL}{pdga_number}"
