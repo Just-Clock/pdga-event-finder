@@ -5,6 +5,9 @@ import pandas as pd
 import re
 import time
 from datetime import datetime
+import random
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 BASE_URL = "https://www.pdga.com"
 PLAYER_URL = "https://www.pdga.com/player/"
@@ -12,6 +15,28 @@ PLAYER_URL = "https://www.pdga.com/player/"
 HEADERS = {
     "User-Agent": "Mozilla/5.0"
 }
+
+session = requests.Session()
+
+retry_strategy = Retry(
+    total=5,
+    backoff_factor=2,
+    status_forcelist=[429, 500, 502, 503, 504],
+    allowed_methods=["GET"]
+)
+
+adapter = HTTPAdapter(
+    max_retries=retry_strategy
+)
+
+session.mount(
+    "https://",
+    adapter
+)
+
+session.headers.update(
+    HEADERS
+)
 
 WATCHLIST = [
 83596,231663,126098,299223,197269,220870,180280,207096,72628,294797,
@@ -75,6 +100,51 @@ def normalize_date(date_str):
         return None
 
 
+##Error 429 fix
+def safe_get(url):
+
+    for attempt in range(5):
+
+        try:
+
+            response = session.get(
+                url,
+                timeout=20
+            )
+
+            if response.status_code == 200:
+                return response
+
+            if response.status_code == 429:
+
+                wait = (
+                    (2 ** attempt)
+                    + random.uniform(
+                        0.5,
+                        1.5
+                    )
+                )
+
+                time.sleep(wait)
+
+                continue
+
+            return response
+
+        except requests.exceptions.RequestException:
+
+            wait = (
+                (2 ** attempt)
+                + random.uniform(
+                    0.5,
+                    1.5
+                )
+            )
+
+            time.sleep(wait)
+
+    return None
+
 # -----------------------
 # SCRAPE EVENT PAGE
 # -----------------------
@@ -83,11 +153,12 @@ def scrape_event_page(event_url):
 
     try:
 
-        response = requests.get(
-            event_url,
-            headers=HEADERS,
-            timeout=20
+        response = safe_get(
+            event_url
         )
+
+        if response is None:
+            return None
 
         soup = BeautifulSoup(
             response.text,
@@ -306,11 +377,21 @@ def get_player_rows(pdga_number):
 
     try:
 
-        response=requests.get(
-            f"{PLAYER_URL}{pdga_number}",
-            headers=HEADERS,
-            timeout=20
+        response = safe_get(
+            f"{PLAYER_URL}{pdga_number}"
         )
+
+        if response is None:
+            return [{
+
+                "PDGA": pdga_number,
+                "Name": "HTTP Error",
+                "Source": "",
+                "Date": None,
+                "Event": "Failed after retries",
+                "Event URL": ""
+
+            }]
 
         if response.status_code != 200:
             return [{
@@ -417,7 +498,7 @@ def get_player_rows(pdga_number):
 
             })
 
-            time.sleep(.25)
+            time.sleep(.5)
 
         if not rows:
 
@@ -491,6 +572,9 @@ def run_scraper(numbers):
         progress.progress(
             (idx + 1) / total
         )
+
+        # Avoid PDGA rate limiting
+        time.sleep(1)
 
     progress.empty()
 
