@@ -86,7 +86,7 @@ def scrape_event_page(event_url):
         response = requests.get(
             event_url,
             headers=HEADERS,
-            timeout=10
+            timeout=20
         )
 
         soup = BeautifulSoup(
@@ -309,18 +309,41 @@ def get_player_rows(pdga_number):
         response=requests.get(
             f"{PLAYER_URL}{pdga_number}",
             headers=HEADERS,
-            timeout=10
+            timeout=20
         )
+
+        if response.status_code != 200:
+            return [{
+                "PDGA": pdga_number,
+                "Name": "HTTP Error",
+                "Source": "",
+                "Date": None,
+                "Event": f"Status {response.status_code}",
+                "Event URL": ""
+            }]
 
         soup=BeautifulSoup(
             response.text,
             "html.parser"
         )
 
-        name_tag=soup.find("h1")
+        name_tag = soup.find("h1")
 
-        player_name=(
-            name_tag.text.strip()
+        if not name_tag:
+            name_tag = soup.select_one(
+                ".page-title"
+            )
+
+        if not name_tag:
+            name_tag = soup.find(
+                attrs={"property": "schema:name"}
+            )
+
+        player_name = (
+            name_tag.get_text(
+                " ",
+                strip=True
+            )
             if name_tag
             else "Unknown"
         )
