@@ -246,6 +246,55 @@ def extract_upcoming_events(soup):
 
     return events
 
+# -----------------------
+# NEXT EVENT (fallback)
+# -----------------------
+
+def extract_next_event(soup):
+
+    events = []
+
+    next_text = soup.find(
+        string=lambda s:
+        s and "next event" in s.lower()
+    )
+
+    if not next_text:
+        return events
+
+    node = next_text.parent
+
+    for link in node.find_all_next(
+        "a",
+        href=True
+    ):
+
+        href = link["href"]
+
+        if (
+            "/event/" in href
+            or "/tour/event/" in href
+        ):
+
+            events.append({
+
+                "name":
+                link.get_text(
+                    strip=True
+                ),
+
+                "url":
+                BASE_URL + href,
+
+                "source":
+                "Next Event"
+
+            })
+
+            break
+
+    return events
+
 
 # -----------------------
 # PLAYER SCRAPER
@@ -276,7 +325,7 @@ def get_player_rows(pdga_number):
             else "Unknown"
         )
 
-        all_events=[]
+        all_events = []
 
         # Pull current events
         all_events.extend(
@@ -288,6 +337,13 @@ def get_player_rows(pdga_number):
         # Pull upcoming events
         all_events.extend(
             extract_upcoming_events(
+                soup
+            )
+        )
+
+        # Pull "Next event" blocks
+        all_events.extend(
+            extract_next_event(
                 soup
             )
         )
