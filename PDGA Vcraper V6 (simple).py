@@ -190,34 +190,37 @@ def extract_current_events(soup):
 
 def extract_upcoming_events(soup):
 
-    events=[]
+    events = []
 
-    for section in soup.find_all(
-        "details"
-    ):
+    for section in soup.find_all("details"):
 
-        summary=section.find(
-            "summary"
-        )
+        summary = section.find("summary")
 
         if not summary:
             continue
 
-        title=summary.get_text(
+        title = summary.get_text(
+            " ",
             strip=True
         ).lower()
 
-        if "upcoming" not in title:
+        if not any(
+            phrase in title
+            for phrase in [
+                "upcoming",
+                "next event"
+            ]
+        ):
             continue
 
-        links=section.find_all(
+        links = section.find_all(
             "a",
             href=True
         )
 
         for link in links:
 
-            href=link["href"]
+            href = link["href"]
 
             if (
                 "/event/" not in href
@@ -234,7 +237,7 @@ def extract_upcoming_events(soup):
                 ),
 
                 "url":
-                BASE_URL+href,
+                BASE_URL + href,
 
                 "source":
                 "Upcoming"
